@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base colors -->
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    
+    <!-- SIT Theme Colors (Green) -->
+    <color name="sit_primary">#388E3C</color>
+    <color name="sit_dark">#1B5E20</color>
+    <color name="sit_light">#C8E6C9</color>
+    <color name="sit_surface">#F1F8E9</color>
+    
+    <!-- SEC Theme Colors (Blue) -->
+    <color name="sec_primary">#1976D2</color>
+    <color name="sec_dark">#0D47A1</color>
+    <color name="sec_light">#BBDEFB</color>
+    <color name="sec_surface">#E3F2FD</color>
+    
+    <!-- Material 3 Gray Scale -->
+    <color name="gray_50">#FAFAFA</color>
+    <color name="gray_100">#F5F5F5</color>
+    <color name="gray_200">#EEEEEE</color>
+    <color name="gray_300">#E0E0E0</color>
+    <color name="gray_400">#BDBDBD</color>
+    <color name="gray_500">#9E9E9E</color>
+    <color name="gray_600">#757575</color>
+    <color name="gray_700">#616161</color>
+    <color name="gray_800">#424242</color>
+    <color name="gray_900">#212121</color>
+    
+    <!-- Semantic colors -->
+    <color name="text_primary">#212121</color>
+    <color name="text_secondary">#757575</color>
+    <color name="text_hint">#9E9E9E</color>
+    <color name="divider">#E0E0E0</color>
+    
+    <!-- Status colors -->
+    <color name="success">#4CAF50</color>
+    <color name="warning">#FF9800</color>
+    <color name="error">#F44336</color>
+    
+    <!-- Legacy compatibility -->
+    <color name="sairam_blue">#1976D2</color>
+    <color name="sairam_dark">#0D47A1</color>
+</resources>

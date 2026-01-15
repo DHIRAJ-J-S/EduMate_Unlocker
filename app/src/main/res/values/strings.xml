@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">EduMate Unlocker</string>
+    <string name="app_version">v1.0</string>
+    
+    <!-- About Page -->
+    <string name="about_title">404, About Page Not Found</string>
+    <string name="about_tagline">Thank You for Trying out my App ;)</string>
+    <string name="about_credit">Cooked up by the.404guy</string>
+    <string name="about_close">Close</string>
+    
+    <!-- Bottom Sheet Menu -->
+    <string name="menu_select_college">Select College</string>
+    <string name="menu_legacy_mode">Legacy Site Mode</string>
+    <string name="menu_desktop_mode">Desktop Mode</string>
+    <string name="menu_clear_cache">Clear Cache</string>
+    <string name="menu_about">About</string>
+    
+    <!-- College Names -->
+    <string name="college_sit">SIT</string>
+    <string name="college_sec">SEC</string>
+    <string name="college_sit_full">Sairam Institute of Technology</string>
+    <string name="college_sec_full">Sairam Engineering College</string>
+    
+    <!-- Dialogs -->
+    <string name="dialog_landscape_title">Best Viewed in Landscape</string>
+    <string name="dialog_landscape_message">For the best experience, rotate your device to landscape mode when using the portal.</string>
+    <string name="dialog_dont_show">Don\'t show again</string>
+    <string name="dialog_ok">OK</string>
+    <string name="dialog_got_it">Got it!</string>
+    
+    <!-- Menu Tip -->
+    <string name="menu_tip_title">Quick Tip</string>
+    <string name="menu_tip_message">Tap the ⚙️ gear icon in the top-right corner to access settings, switch colleges, or toggle legacy mode.</string>
+    
+    <!-- Status Messages -->
+    <string name="status_loading">Loading…</string>
+    <string name="status_ready">Ready</string>
+    <string name="status_error">Error</string>
+    
+    <!-- Easter Egg -->
+    <string name="easter_egg_error">404 Image Not Found</string>
+</resources>

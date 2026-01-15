@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base Material 3 Theme -->
+    <style name="Theme.SairamPortal" parent="Theme.Material3.Light.NoActionBar">
+        <!-- Primary colors (SIT Blue default) -->
+        <item name="colorPrimary">@color/sit_primary</item>
+        <item name="colorOnPrimary">@color/white</item>
+        <item name="colorPrimaryContainer">@color/sit_light</item>
+        <item name="colorOnPrimaryContainer">@color/sit_dark</item>
+        
+        <!-- Secondary colors -->
+        <item name="colorSecondary">@color/sit_primary</item>
+        <item name="colorOnSecondary">@color/white</item>
+        <item name="colorSecondaryContainer">@color/sit_light</item>
+        <item name="colorOnSecondaryContainer">@color/sit_dark</item>
+        
+        <!-- Surface colors -->
+        <item name="colorSurface">@color/white</item>
+        <item name="colorOnSurface">@color/black</item>
+        <item name="colorSurfaceVariant">@color/gray_100</item>
+        <item name="colorOnSurfaceVariant">@color/gray_700</item>
+        
+        <!-- Background -->
+        <item name="android:colorBackground">@color/gray_50</item>
+        <item name="colorOnBackground">@color/black</item>
+        
+        <!-- System bars -->
+        <item name="android:statusBarColor">@color/sit_dark</item>
+        <item name="android:navigationBarColor">@color/sit_primary</item>
+        
+        <!-- Outline -->
+        <item name="colorOutline">@color/gray_300</item>
+        
+        <!-- Bottom Sheet Style -->
+        <item name="bottomSheetDialogTheme">@style/ThemeOverlay.App.BottomSheetDialog</item>
+    </style>
+    
+    <!-- Bottom Sheet Theme -->
+    <style name="ThemeOverlay.App.BottomSheetDialog" parent="ThemeOverlay.Material3.BottomSheetDialog">
+        <item name="bottomSheetStyle">@style/Widget.App.BottomSheet.Modal</item>
+    </style>
+    
+    <style name="Widget.App.BottomSheet.Modal" parent="Widget.Material3.BottomSheet.Modal">
+        <item name="shapeAppearanceOverlay">@style/ShapeAppearance.App.LargeComponent</item>
+        <item name="backgroundTint">@color/white</item>
+    </style>
+    
+    <style name="ShapeAppearance.App.LargeComponent" parent="ShapeAppearance.Material3.LargeComponent">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSizeTopLeft">24dp</item>
+        <item name="cornerSizeTopRight">24dp</item>
+        <item name="cornerSizeBottomLeft">0dp</item>
+        <item name="cornerSizeBottomRight">0dp</item>
+    </style>
+    
+    <!-- Rounded Dialog Style (Material 3) -->
+    <style name="RoundedDialog" parent="ThemeOverlay.Material3.MaterialAlertDialog">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="shapeAppearanceOverlay">@style/ShapeAppearance.App.Dialog</item>
+    </style>
+    
+    <style name="ShapeAppearance.App.Dialog" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">28dp</item>
+    </style>
+    
+    <!-- Material 3 Button Styles -->
+    <style name="Widget.App.Button.Filled" parent="Widget.Material3.Button">
+        <item name="cornerRadius">12dp</item>
+    </style>
+    
+    <style name="Widget.App.Button.Outlined" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="cornerRadius">12dp</item>
+    </style>
+    
+    <style name="Widget.App.Button.Text" parent="Widget.Material3.Button.TextButton">
+        <item name="cornerRadius">12dp</item>
+    </style>
+    
+    <!-- Card Style -->
+    <style name="Widget.App.CardView" parent="Widget.Material3.CardView.Elevated">
+        <item name="cardCornerRadius">16dp</item>
+        <item name="cardElevation">2dp</item>
+    </style>
+    
+    <!-- Circle Image View -->
+    <style name="CircleImageView" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">50%</item>
+    </style>
+</resources>
