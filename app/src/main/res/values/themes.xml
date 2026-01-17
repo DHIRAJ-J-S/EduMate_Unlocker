@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Base Material 3 Theme -->
-    <style name="Theme.SairamPortal" parent="Theme.Material3.Light.NoActionBar">
+    <style name="Theme.EduMateUnlocker" parent="Theme.Material3.Light.NoActionBar">
         <!-- Primary colors (SIT Blue default) -->
         <item name="colorPrimary">@color/sit_primary</item>
         <item name="colorOnPrimary">@color/white</item>

@@ -4,13 +4,13 @@ plugins {
 }
 
 android {
-    namespace 'com.aura.sairamportal'
-    compileSdk 34
+    namespace 'com.the404guy.em_unlocker'
+    compileSdk 35
 
     defaultConfig {
-        applicationId "com.aura.sairamportal"
+        applicationId "com.the404guy.em_unlocker"
         minSdk 24
-        targetSdk 34
+        targetSdk 35
         versionCode 1
         versionName "v1"
     }

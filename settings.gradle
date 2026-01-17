@@ -13,5 +13,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "SairamPortal"
+rootProject.name = "EduMateUnlocker"
 include ':app'
