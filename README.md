@@ -3,7 +3,7 @@
 ![Android](https://img.shields.io/badge/Platform-Android-3DDC84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-1.9-7F52FF?logo=kotlin&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Version](https://img.shields.io/badge/Version-1.0-orange)
+![Version](https://img.shields.io/badge/Version-1.1-orange)
 
 [![Download APK](https://img.shields.io/badge/Download-Latest%20APK-brightgreen?style=for-the-badge&logo=android)](https://github.com/DHIRAJ-J-S/EduMate_Unlocker/releases/latest/download/EduMate_Unlocker.apk)
 
@@ -67,6 +67,7 @@ This app is built with Kotlin and uses Android WebView to load the EduMate porta
 ---
 
 ## 📱 Screenshots
+(Soon)
 
 <!-- Add your screenshots here -->
 <!-- ![Home](screenshots/home.png) -->
