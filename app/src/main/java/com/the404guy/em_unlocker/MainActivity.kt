@@ -2,11 +2,13 @@ package com.the404guy.em_unlocker
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.DownloadManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.content.res.ColorStateList
-import android.graphics.Bitmap
 import android.graphics.Typeface
 import android.net.Uri
 import android.net.http.SslError
@@ -35,10 +37,17 @@ import androidx.cardview.widget.CardView
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import org.json.JSONObject
+import java.io.BufferedReader
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStreamReader
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
 
@@ -50,14 +59,19 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_FIRST_LAUNCH = "first_launch"
         private const val KEY_USE_LEGACY_SITE = "use_legacy_site"
         private const val KEY_TIP_SHOWN = "tip_shown"
+        private const val KEY_CHECK_UPDATES = "check_updates_on_startup"
         
         const val COLLEGE_SIT = "SIT"
         const val COLLEGE_SEC = "SEC"
+        
+        private const val CURRENT_VERSION = "1.3"
         
         // ============================================
         // GITHUB REPOSITORY URL
         // ============================================
         private const val GITHUB_REPO_URL = "https://github.com/DHIRAJ-J-S/EduMate_Unlocker"
+        private const val GITHUB_API_RELEASES = "https://api.github.com/repos/DHIRAJ-J-S/EduMate_Unlocker/releases/latest"
+        private const val GITHUB_RELEASES_PAGE = "https://github.com/DHIRAJ-J-S/EduMate_Unlocker/releases/latest"
         // ============================================
         
         val NEW_SITE_URLS = mapOf(
@@ -83,10 +97,13 @@ class MainActivity : AppCompatActivity() {
     
     private var easterEggClicks = 0
     private var settingsDialog: AlertDialog? = null
+    private var updateBottomSheet: BottomSheetDialog? = null
     
     private var spoofEnabled = true
     private var selectedCollege = COLLEGE_SIT
     private var useLegacySite = false
+    private var updateIgnoredThisSession = false
+    private var currentDownloadId: Long = -1
 
     private val desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     private var defaultUserAgent = ""
@@ -176,7 +193,6 @@ class MainActivity : AppCompatActivity() {
         })();
     """.trimIndent()
 
-    // CSS fix for new site login page - makes input fields wider and easier to use on mobile
     private val newSiteLoginFixScript = """
         (function() {
             try {
@@ -185,14 +201,11 @@ class MainActivity : AppCompatActivity() {
                 
                 var style = document.createElement('style');
                 style.textContent = `
-                    /* Make form container wider */
                     form#form {
                         width: 100% !important;
                         max-width: 400px !important;
                         padding: 0 16px !important;
                     }
-                    
-                    /* Make input fields wider and taller */
                     form#form input[type="text"],
                     form#form input[type="password"],
                     form#form input[name="studentId"],
@@ -205,32 +218,22 @@ class MainActivity : AppCompatActivity() {
                         padding: 12px 12px 12px 44px !important;
                         box-sizing: border-box !important;
                     }
-                    
-                    /* Adjust password field to give more space for show/hide button */
                     form#form input[type="password"],
                     form#form input[name="password"] {
                         padding-right: 48px !important;
                     }
-                    
-                    /* Make the input containers wider */
                     form#form .relative,
                     form#form .space-y-2 {
                         width: 100% !important;
                     }
-                    
-                    /* Ensure icons are properly positioned */
                     form#form .absolute.left-3 {
                         left: 12px !important;
                     }
-                    
-                    /* Make show password button easier to tap */
                     form#form button[type="button"] {
                         min-width: 44px !important;
                         min-height: 44px !important;
                         padding: 10px !important;
                     }
-                    
-                    /* Make login button wider */
                     form#form button[type="submit"],
                     form#form .bg-primary {
                         width: 100% !important;
@@ -238,19 +241,14 @@ class MainActivity : AppCompatActivity() {
                         height: 48px !important;
                         font-size: 16px !important;
                     }
-                    
-                    /* Adjust the main container for better mobile view */
                     .w-full.space-y-6 {
                         width: 100% !important;
                         max-width: 400px !important;
                     }
                 `;
                 document.head.appendChild(style);
-                
-                console.log('[EduMate] Login page CSS fix applied');
                 return 'OK';
             } catch(e) {
-                console.error('[EduMate] CSS fix error:', e);
                 return 'ERROR: ' + e.message;
             }
         })();
@@ -264,7 +262,6 @@ class MainActivity : AppCompatActivity() {
         spoofEnabled = prefs.getBoolean(KEY_SPOOF_ENABLED, true)
         selectedCollege = prefs.getString(KEY_SELECTED_COLLEGE, COLLEGE_SIT) ?: COLLEGE_SIT
         
-        // Legacy mode does NOT persist across launches
         useLegacySite = false
         prefs.edit().putBoolean(KEY_USE_LEGACY_SITE, false).apply()
         
@@ -307,8 +304,210 @@ class MainActivity : AppCompatActivity() {
         } else {
             applyCollegeTheme(selectedCollege)
             loadSelectedCollege()
+            
+            // Check for updates only if not first launch and enabled
+            if (prefs.getBoolean(KEY_CHECK_UPDATES, true)) {
+                checkForUpdates()
+            }
         }
     }
+
+    // ==================== UPDATE CHECKER ====================
+    
+    private fun checkForUpdates() {
+        if (updateIgnoredThisSession) return
+        
+        Executors.newSingleThreadExecutor().execute {
+            try {
+                val url = URL(GITHUB_API_RELEASES)
+                val connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.setRequestProperty("Accept", "application/vnd.github.v3+json")
+                connection.connectTimeout = 10000
+                connection.readTimeout = 10000
+                
+                if (connection.responseCode == HttpURLConnection.HTTP_OK) {
+                    val reader = BufferedReader(InputStreamReader(connection.inputStream))
+                    val response = StringBuilder()
+                    var line: String?
+                    while (reader.readLine().also { line = it } != null) {
+                        response.append(line)
+                    }
+                    reader.close()
+                    
+                    val json = JSONObject(response.toString())
+                    val latestVersion = json.getString("tag_name").removePrefix("v")
+                    val changelog = json.optString("body", "• Bug fixes and improvements")
+                    val downloadUrl = getApkDownloadUrl(json)
+                    
+                    if (isNewerVersion(latestVersion, CURRENT_VERSION) && downloadUrl != null) {
+                        runOnUiThread {
+                            showUpdateDialog(latestVersion, changelog, downloadUrl)
+                        }
+                    }
+                }
+                connection.disconnect()
+            } catch (e: Exception) {
+                Log.e(TAG, "Update check failed", e)
+            }
+        }
+    }
+    
+    private fun getApkDownloadUrl(json: JSONObject): String? {
+        try {
+            val assets = json.getJSONArray("assets")
+            for (i in 0 until assets.length()) {
+                val asset = assets.getJSONObject(i)
+                val name = asset.getString("name")
+                if (name.endsWith(".apk")) {
+                    return asset.getString("browser_download_url")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to parse APK URL", e)
+        }
+        return null
+    }
+    
+    private fun isNewerVersion(latest: String, current: String): Boolean {
+        try {
+            val latestParts = latest.split(".").map { it.toIntOrNull() ?: 0 }
+            val currentParts = current.split(".").map { it.toIntOrNull() ?: 0 }
+            
+            for (i in 0 until maxOf(latestParts.size, currentParts.size)) {
+                val l = latestParts.getOrElse(i) { 0 }
+                val c = currentParts.getOrElse(i) { 0 }
+                if (l > c) return true
+                if (l < c) return false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Version comparison failed", e)
+        }
+        return false
+    }
+    
+    private fun showUpdateDialog(latestVersion: String, changelog: String, downloadUrl: String) {
+        if (isFinishing || isDestroyed) return
+        
+        updateBottomSheet = BottomSheetDialog(this)
+        val dialogView = layoutInflater.inflate(R.layout.dialog_update, null)
+        updateBottomSheet?.setContentView(dialogView)
+        
+        val textCurrentVersion = dialogView.findViewById<TextView>(R.id.textCurrentVersion)
+        val textLatestVersion = dialogView.findViewById<TextView>(R.id.textLatestVersion)
+        val textChangelog = dialogView.findViewById<TextView>(R.id.textChangelog)
+        val changelogHeader = dialogView.findViewById<LinearLayout>(R.id.changelogHeader)
+        val changelogContainer = dialogView.findViewById<ScrollView>(R.id.changelogContainer)
+        val iconExpand = dialogView.findViewById<ImageView>(R.id.iconExpandChangelog)
+        val btnInstall = dialogView.findViewById<Button>(R.id.btnInstallUpdate)
+        val btnViewRelease = dialogView.findViewById<Button>(R.id.btnViewRelease)
+        val btnIgnore = dialogView.findViewById<Button>(R.id.btnIgnoreUpdate)
+        
+        textCurrentVersion?.text = CURRENT_VERSION
+        textLatestVersion?.text = latestVersion
+        textChangelog?.text = changelog.ifEmpty { "• Bug fixes and improvements" }
+        
+        // Apply theme color to install button
+        val primaryColor = if (selectedCollege == COLLEGE_SIT) {
+            ContextCompat.getColor(this, R.color.sit_primary)
+        } else {
+            ContextCompat.getColor(this, R.color.sec_primary)
+        }
+        btnInstall?.backgroundTintList = ColorStateList.valueOf(primaryColor)
+        
+        // Collapsible changelog
+        var changelogExpanded = false
+        changelogHeader?.setOnClickListener {
+            changelogExpanded = !changelogExpanded
+            changelogContainer?.visibility = if (changelogExpanded) View.VISIBLE else View.GONE
+            iconExpand?.rotation = if (changelogExpanded) 180f else 0f
+        }
+        
+        btnInstall?.setOnClickListener {
+            updateBottomSheet?.dismiss()
+            downloadAndInstallApk(downloadUrl, latestVersion)
+        }
+        
+        btnViewRelease?.setOnClickListener {
+            updateBottomSheet?.dismiss()
+            try {
+                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(GITHUB_RELEASES_PAGE)))
+            } catch (e: Exception) {
+                showToast("Could not open browser")
+            }
+        }
+        
+        btnIgnore?.setOnClickListener {
+            updateIgnoredThisSession = true
+            updateBottomSheet?.dismiss()
+        }
+        
+        updateBottomSheet?.show()
+    }
+    
+    private fun downloadAndInstallApk(downloadUrl: String, version: String) {
+        try {
+            val fileName = "EduMate_Unlocker_$version.apk"
+            val request = DownloadManager.Request(Uri.parse(downloadUrl))
+                .setTitle("EduMate Unlocker $version")
+                .setDescription("Downloading update...")
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+                .setAllowedOverMetered(true)
+                .setAllowedOverRoaming(true)
+            
+            val downloadManager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+            currentDownloadId = downloadManager.enqueue(request)
+            
+            showToast("Downloading update...")
+            
+            // Register receiver for download completion
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    val id = intent?.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1)
+                    if (id == currentDownloadId) {
+                        installApk(fileName)
+                        try {
+                            unregisterReceiver(this)
+                        } catch (e: Exception) { }
+                    }
+                }
+            }
+            
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                registerReceiver(receiver, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE), RECEIVER_NOT_EXPORTED)
+            } else {
+                registerReceiver(receiver, IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE))
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Download failed", e)
+            showToast("Download failed: ${e.message}")
+        }
+    }
+    
+    private fun installApk(fileName: String) {
+        try {
+            val file = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName)
+            
+            val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
+            } else {
+                Uri.fromFile(file)
+            }
+            
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+            }
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Install failed", e)
+            showToast("Please install manually from Downloads folder")
+        }
+    }
+
+    // ==================== END UPDATE CHECKER ====================
 
     private fun showCollegeSelectionDialog(isFirstLaunch: Boolean = false) {
         val dialogView = layoutInflater.inflate(R.layout.dialog_college_selection, null)
@@ -322,7 +521,6 @@ class MainActivity : AppCompatActivity() {
         val secCard = dialogView.findViewById<CardView>(R.id.cardSEC)
         val legacySwitch = dialogView.findViewById<SwitchCompat>(R.id.switchLegacySite)
         
-        // Set current legacy state
         legacySwitch.isChecked = useLegacySite
         
         legacySwitch.setOnCheckedChangeListener { _, isChecked ->
@@ -342,7 +540,6 @@ class MainActivity : AppCompatActivity() {
             applyCollegeTheme(COLLEGE_SIT)
             dialog.dismiss()
             
-            // Show tip dialog only on first launch
             if (isFirstLaunch && !prefs.getBoolean(KEY_TIP_SHOWN, false)) {
                 showTipDialog()
             } else {
@@ -356,7 +553,6 @@ class MainActivity : AppCompatActivity() {
             applyCollegeTheme(COLLEGE_SEC)
             dialog.dismiss()
             
-            // Show tip dialog only on first launch
             if (isFirstLaunch && !prefs.getBoolean(KEY_TIP_SHOWN, false)) {
                 showTipDialog()
             } else {
@@ -378,7 +574,6 @@ class MainActivity : AppCompatActivity() {
 
         val btnGotIt = dialogView.findViewById<Button>(R.id.btnGotIt)
         
-        // Apply theme color to button
         val primaryColor = if (selectedCollege == COLLEGE_SIT) {
             ContextCompat.getColor(this, R.color.sit_primary)
         } else {
@@ -387,7 +582,6 @@ class MainActivity : AppCompatActivity() {
         btnGotIt.backgroundTintList = ColorStateList.valueOf(primaryColor)
         
         btnGotIt.setOnClickListener {
-            // Mark tip as shown
             prefs.edit().putBoolean(KEY_TIP_SHOWN, true).apply()
             dialog.dismiss()
             loadSelectedCollege()
@@ -409,19 +603,19 @@ class MainActivity : AppCompatActivity() {
         val textSIT = dialogView.findViewById<TextView>(R.id.textSIT)
         val textSEC = dialogView.findViewById<TextView>(R.id.textSEC)
         val switchLegacy = dialogView.findViewById<SwitchCompat>(R.id.switchLegacy)
+        val switchUpdateCheck = dialogView.findViewById<SwitchCompat>(R.id.switchUpdateCheck)
         val btnClearCache = dialogView.findViewById<LinearLayout>(R.id.btnClearCache)
         val btnAbout = dialogView.findViewById<LinearLayout>(R.id.btnAbout)
         val btnGitHub = dialogView.findViewById<LinearLayout>(R.id.btnGitHub)
         
-        // Highlight current college
         if (selectedCollege == COLLEGE_SIT) {
             btnSIT.setCardBackgroundColor(ContextCompat.getColor(this, R.color.sit_light))
         } else {
             btnSEC.setCardBackgroundColor(ContextCompat.getColor(this, R.color.sec_light))
         }
         
-        // Set legacy switch state
         switchLegacy.isChecked = useLegacySite
+        switchUpdateCheck?.isChecked = prefs.getBoolean(KEY_CHECK_UPDATES, true)
         
         btnSIT.setOnClickListener {
             if (selectedCollege != COLLEGE_SIT) {
@@ -450,6 +644,10 @@ class MainActivity : AppCompatActivity() {
             applyCollegeTheme(selectedCollege)
             settingsDialog?.dismiss()
             loadSelectedCollege()
+        }
+        
+        switchUpdateCheck?.setOnCheckedChangeListener { _, isChecked ->
+            prefs.edit().putBoolean(KEY_CHECK_UPDATES, isChecked).apply()
         }
         
         btnClearCache.setOnClickListener {
@@ -483,58 +681,63 @@ class MainActivity : AppCompatActivity() {
     private fun applyCollegeTheme(college: String) {
         val primaryColor: Int
         val darkColor: Int
-        val lightColor: Int
         
         if (college == COLLEGE_SIT) {
             primaryColor = ContextCompat.getColor(this, R.color.sit_primary)
             darkColor = ContextCompat.getColor(this, R.color.sit_dark)
-            lightColor = ContextCompat.getColor(this, R.color.sit_light)
         } else {
             primaryColor = ContextCompat.getColor(this, R.color.sec_primary)
             darkColor = ContextCompat.getColor(this, R.color.sec_dark)
-            lightColor = ContextCompat.getColor(this, R.color.sec_light)
         }
         
         toolbar.setBackgroundColor(primaryColor)
-        val siteType = if (useLegacySite) " (Legacy)" else ""
-        supportActionBar?.title = "EduMate Unlocker - $college$siteType"
         
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            window.statusBarColor = darkColor
-            window.navigationBarColor = primaryColor
-        }
+        val title = if (useLegacySite) "EduMate Unlocker - $college (Legacy)" else "EduMate Unlocker - $college"
+        supportActionBar?.title = title
         
+        window.statusBarColor = darkColor
+        window.navigationBarColor = primaryColor
+        
+        swipeRefresh.setColorSchemeColors(primaryColor)
         progressBar.progressTintList = ColorStateList.valueOf(primaryColor)
-        statusText.setBackgroundColor(lightColor)
-        statusText.setTextColor(darkColor)
-        swipeRefresh.setColorSchemeColors(primaryColor, darkColor)
     }
 
     private fun saveCollegePreference() {
         prefs.edit()
             .putString(KEY_SELECTED_COLLEGE, selectedCollege)
             .putBoolean(KEY_FIRST_LAUNCH, false)
-            .putBoolean(KEY_USE_LEGACY_SITE, useLegacySite)
             .apply()
     }
 
     private fun loadSelectedCollege() {
-        val url: String
-        
-        if (useLegacySite) {
-            url = LEGACY_SITE_URLS[selectedCollege] ?: LEGACY_SITE_URLS[COLLEGE_SIT]!!
-            webView.settings.userAgentString = defaultUserAgent
-            spoofEnabled = false
+        val url = if (useLegacySite) {
+            LEGACY_SITE_URLS[selectedCollege] ?: NEW_SITE_URLS[COLLEGE_SIT]
         } else {
-            url = NEW_SITE_URLS[selectedCollege] ?: NEW_SITE_URLS[COLLEGE_SIT]!!
-            webView.settings.userAgentString = desktopUserAgent
-            spoofEnabled = true
+            NEW_SITE_URLS[selectedCollege] ?: NEW_SITE_URLS[COLLEGE_SIT]
         }
         
-        val siteType = if (useLegacySite) " (Legacy)" else ""
-        supportActionBar?.title = "EduMate Unlocker - $selectedCollege$siteType"
-        updateStatus("Loading $selectedCollege...")
-        webView.loadUrl(url)
+        if (!useLegacySite && spoofEnabled) {
+            webView.settings.userAgentString = desktopUserAgent
+        } else {
+            webView.settings.userAgentString = defaultUserAgent
+        }
+        
+        webView.loadUrl(url!!)
+    }
+
+    override fun onCreateOptionsMenu(menu: Menu?): Boolean {
+        menuInflater.inflate(R.menu.main_menu, menu)
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        return when (item.itemId) {
+            R.id.action_settings -> {
+                showSettingsDialog()
+                true
+            }
+            else -> super.onOptionsItemSelected(item)
+        }
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -543,22 +746,16 @@ class MainActivity : AppCompatActivity() {
             javaScriptEnabled = true
             domStorageEnabled = true
             databaseEnabled = true
-            userAgentString = if (useLegacySite) defaultUserAgent else desktopUserAgent
-            useWideViewPort = true
-            loadWithOverviewMode = true
-            setSupportZoom(true)
-            builtInZoomControls = true
-            displayZoomControls = false
-            cacheMode = WebSettings.LOAD_NO_CACHE
-            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             allowFileAccess = true
             allowContentAccess = true
+            loadWithOverviewMode = true
+            useWideViewPort = true
+            builtInZoomControls = true
+            displayZoomControls = false
+            setSupportZoom(true)
+            mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+            cacheMode = WebSettings.LOAD_DEFAULT
             mediaPlaybackRequiresUserGesture = false
-            defaultTextEncodingName = "UTF-8"
-            @Suppress("DEPRECATION")
-            allowUniversalAccessFromFileURLs = true
-            @Suppress("DEPRECATION")
-            allowFileAccessFromFileURLs = true
         }
 
         CookieManager.getInstance().apply {
@@ -566,15 +763,12 @@ class MainActivity : AppCompatActivity() {
             setAcceptThirdPartyCookies(webView, true)
         }
 
-        WebView.setWebContentsDebuggingEnabled(true)
-        webView.addJavascriptInterface(BlobDownloadInterface(), "AndroidBlobDownloader")
-
         webView.webViewClient = object : WebViewClient() {
-            
-            override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, favicon)
-                updateStatus("Loading...")
                 progressBar.visibility = View.VISIBLE
+                progressBar.progress = 0
+                updateStatus("Loading...")
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
@@ -584,7 +778,6 @@ class MainActivity : AppCompatActivity() {
                 
                 if (!useLegacySite && spoofEnabled) {
                     view?.evaluateJavascript(desktopSpoofScript, null)
-                    // Also apply login page CSS fix for new site
                     view?.evaluateJavascript(newSiteLoginFixScript, null)
                 }
                 
@@ -706,242 +899,79 @@ class MainActivity : AppCompatActivity() {
             }
         } catch (e: Exception) { }
         
-        val extension = getExtensionFromMimetype(mimetype)
+        val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimetype) ?: "bin"
         val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
         return "download_$timestamp.$extension"
     }
     
-    private fun getExtensionFromMimetype(mimetype: String?): String {
-        return when {
-            mimetype?.contains("pdf") == true -> "pdf"
-            mimetype?.contains("png") == true -> "png"
-            mimetype?.contains("jpeg") == true || mimetype?.contains("jpg") == true -> "jpg"
-            mimetype?.contains("gif") == true -> "gif"
-            mimetype?.contains("webp") == true -> "webp"
-            mimetype?.contains("excel") == true || mimetype?.contains("spreadsheet") == true -> "xlsx"
-            mimetype?.contains("word") == true || mimetype?.contains("document") == true -> "docx"
-            mimetype?.contains("image") == true -> "png"
-            else -> "bin"
+    private fun handleDownloadViaJavaScript(url: String, filename: String, mimetype: String?) {
+        if (url.startsWith("blob:")) {
+            handleBlobDownload(filename)
+        } else {
+            downloadFile(url, filename, mimetype)
         }
     }
-    
-    private fun handleDownloadViaJavaScript(url: String, filename: String, mimetype: String?) {
-        updateStatus("Downloading: $filename")
-        
-        val escapedUrl = url.replace("'", "\\'").replace("\\", "\\\\").replace("\n", "").replace("\r", "")
-        val escapedFilename = filename.replace("'", "\\'").replace("\\", "\\\\")
-        
+
+    private fun handleBlobDownload(filename: String) {
         val script = """
-            (async function() {
+            (function() {
                 try {
-                    AndroidBlobDownloader.onProgress('Starting download...');
-                    var url = '$escapedUrl';
-                    var filename = '$escapedFilename';
-                    
-                    if (url.startsWith('blob:')) {
-                        var imgs = document.querySelectorAll('img');
-                        for (var i = 0; i < imgs.length; i++) {
-                            if (imgs[i].src === url) {
-                                try {
-                                    var canvas = document.createElement('canvas');
-                                    canvas.width = imgs[i].naturalWidth || imgs[i].width || 200;
-                                    canvas.height = imgs[i].naturalHeight || imgs[i].height || 200;
-                                    var ctx = canvas.getContext('2d');
-                                    ctx.drawImage(imgs[i], 0, 0);
-                                    var dataUrl = canvas.toDataURL('image/png');
-                                    if (dataUrl && dataUrl.length > 100) {
-                                        AndroidBlobDownloader.onBlobReady(dataUrl, filename.replace(/\.[^.]+$/, '.png'));
-                                        return;
-                                    }
-                                } catch(e) {}
-                            }
-                        }
+                    var links = document.querySelectorAll('a[href^="blob:"]');
+                    if (links.length > 0) {
+                        var blobUrl = links[links.length - 1].href;
+                        fetch(blobUrl)
+                            .then(response => response.blob())
+                            .then(blob => {
+                                var reader = new FileReader();
+                                reader.onload = function() {
+                                    window.AndroidBridge && window.AndroidBridge.onBlobData(reader.result, '$filename');
+                                };
+                                reader.readAsDataURL(blob);
+                            });
+                        return 'fetching';
                     }
-                    
-                    const response = await fetch(url, { method: 'GET', credentials: 'include' });
-                    if (response.ok) {
-                        const blob = await response.blob();
-                        if (blob.size > 0) {
-                            AndroidBlobDownloader.onProgress('Processing ' + (blob.size / 1024).toFixed(1) + ' KB...');
-                            const reader = new FileReader();
-                            reader.onloadend = function() {
-                                if (reader.result && reader.result.length > 50) {
-                                    AndroidBlobDownloader.onBlobReady(reader.result, filename);
-                                } else {
-                                    AndroidBlobDownloader.onBlobError('Empty response');
-                                }
-                            };
-                            reader.readAsDataURL(blob);
-                            return;
-                        }
-                    }
-                    AndroidBlobDownloader.onBlobError('Download failed');
+                    return 'no blob found';
                 } catch(e) {
-                    AndroidBlobDownloader.onBlobError(e.toString());
+                    return 'error: ' + e.message;
                 }
             })();
         """.trimIndent()
         
-        webView.evaluateJavascript(script, null)
+        webView.evaluateJavascript(script) { result ->
+            Log.d(TAG, "Blob download result: $result")
+        }
     }
     
-    private fun showDownloadCompleteDialog(file: File, filename: String) {
-        val dialogView = layoutInflater.inflate(R.layout.dialog_download_complete, null)
-        
-        val filenameText = dialogView.findViewById<TextView>(R.id.textFilename)
-        val btnOpen = dialogView.findViewById<Button>(R.id.btnOpen)
-        val btnShare = dialogView.findViewById<Button>(R.id.btnShare)
-        val btnClose = dialogView.findViewById<Button>(R.id.btnClose)
-        
-        filenameText.text = filename
-        
-        val primaryColor = if (selectedCollege == COLLEGE_SIT) {
-            ContextCompat.getColor(this, R.color.sit_primary)
-        } else {
-            ContextCompat.getColor(this, R.color.sec_primary)
-        }
-        btnOpen.backgroundTintList = ColorStateList.valueOf(primaryColor)
-        btnShare.backgroundTintList = ColorStateList.valueOf(primaryColor)
-        
-        val dialog = AlertDialog.Builder(this, R.style.RoundedDialog)
-            .setView(dialogView)
-            .setCancelable(true)
-            .create()
-        
-        btnOpen.setOnClickListener {
-            dialog.dismiss()
-            openFile(file)
-        }
-        
-        btnShare.setOnClickListener {
-            dialog.dismiss()
-            shareFile(file)
-        }
-        
-        btnClose.setOnClickListener {
-            dialog.dismiss()
-        }
-        
-        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-        dialog.show()
-    }
-    
-    private fun openFile(file: File) {
+    private fun downloadFile(url: String, filename: String, mimetype: String?) {
         try {
-            val uri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, getMimeType(file.name))
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            val request = DownloadManager.Request(Uri.parse(url))
+                .setTitle(filename)
+                .setDescription("Downloading...")
+                .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename)
+                .setAllowedOverMetered(true)
+                .setAllowedOverRoaming(true)
+            
+            if (!mimetype.isNullOrEmpty()) {
+                request.setMimeType(mimetype)
             }
-            startActivity(Intent.createChooser(intent, "Open with"))
+            
+            val downloadManager = getSystemService(DOWNLOAD_SERVICE) as DownloadManager
+            downloadManager.enqueue(request)
+            
+            showToast("Download started: $filename")
         } catch (e: Exception) {
-            showToast("No app found to open this file")
-        }
-    }
-    
-    private fun shareFile(file: File) {
-        try {
-            val uri = FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = getMimeType(file.name)
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            startActivity(Intent.createChooser(intent, "Share via"))
-        } catch (e: Exception) {
-            showToast("Failed to share file")
-        }
-    }
-    
-    private fun getMimeType(filename: String): String {
-        val extension = filename.substringAfterLast('.', "").lowercase()
-        return when (extension) {
-            "pdf" -> "application/pdf"
-            "png" -> "image/png"
-            "jpg", "jpeg" -> "image/jpeg"
-            "gif" -> "image/gif"
-            "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            else -> "*/*"
-        }
-    }
-    
-    inner class BlobDownloadInterface {
-        @JavascriptInterface
-        fun onProgress(message: String) {
-            runOnUiThread { updateStatus(message) }
-        }
-        
-        @JavascriptInterface
-        fun onBlobReady(base64Data: String, filename: String) {
-            runOnUiThread {
-                try {
-                    updateStatus("Saving: $filename")
-                    
-                    if (base64Data.isEmpty()) {
-                        showToast("Download failed: Empty data")
-                        return@runOnUiThread
-                    }
-                    
-                    val base64Content = if (base64Data.contains(",")) {
-                        base64Data.substring(base64Data.indexOf(",") + 1)
-                    } else {
-                        base64Data
-                    }
-                    
-                    val data = Base64.decode(base64Content, Base64.DEFAULT)
-                    val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                    if (!downloadsDir.exists()) downloadsDir.mkdirs()
-                    
-                    val file = File(downloadsDir, filename)
-                    FileOutputStream(file).use { it.write(data) }
-                    
-                    val fileSizeKB = data.size / 1024
-                    updateStatus("Downloaded: $filename ($fileSizeKB KB)")
-                    
-                    val intent = Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE)
-                    intent.data = Uri.fromFile(file)
-                    sendBroadcast(intent)
-                    
-                    showDownloadCompleteDialog(file, filename)
-                    
-                } catch (e: Exception) {
-                    showToast("Download failed: ${e.message}")
-                    updateStatus("Download failed")
-                }
-            }
-        }
-        
-        @JavascriptInterface
-        fun onBlobError(error: String) {
-            runOnUiThread {
-                showToast("Download failed: $error")
-                updateStatus("Download failed")
-            }
+            Log.e(TAG, "Download failed", e)
+            showToast("Download failed: ${e.message}")
         }
     }
 
-    private fun updateStatus(text: String) {
-        runOnUiThread { statusText.text = text }
+    private fun updateStatus(status: String) {
+        statusText.text = status
     }
 
     private fun showToast(message: String) {
-        runOnUiThread { Toast.makeText(this, message, Toast.LENGTH_SHORT).show() }
-    }
-
-    override fun onCreateOptionsMenu(menu: Menu?): Boolean {
-        menuInflater.inflate(R.menu.main_menu, menu)
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        return when (item.itemId) {
-            R.id.menu_settings -> {
-                showSettingsDialog()
-                true
-            }
-            else -> super.onOptionsItemSelected(item)
-        }
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
     private fun showAboutDialog() {
@@ -966,10 +996,9 @@ class MainActivity : AppCompatActivity() {
         appIcon?.setImageResource(R.mipmap.ic_launcher)
         appNameText?.text = "EduMate Unlocker"
         titleText?.text = "404, About Page Not Found"
-        versionText?.text = "v1.0"
+        versionText?.text = "v$CURRENT_VERSION"
         taglineText?.text = "Thank You for Trying out my App ;)"
         
-        // Credit with bold "the.404guy"
         val creditString = "Cooked up by the.404guy"
         val spannableCredit = SpannableString(creditString)
         val startIndex = creditString.indexOf("the.404guy")
@@ -977,9 +1006,6 @@ class MainActivity : AppCompatActivity() {
         spannableCredit.setSpan(StyleSpan(Typeface.BOLD), startIndex, endIndex, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         creditText?.text = spannableCredit
         
-        // Easter egg logic:
-        // 5 clicks = show photo
-        // 10, 15, 20... clicks = show 404 error
         easterEggClicks = 0
         
         versionText?.setOnClickListener {
@@ -989,22 +1015,18 @@ class MainActivity : AppCompatActivity() {
                 easterEggContainer?.visibility = View.VISIBLE
                 
                 if (easterEggClicks == 5) {
-                    // First 5 clicks - show photo in circular CardView
                     easterEggCard?.visibility = View.VISIBLE
                     easterEggError?.visibility = View.GONE
                     try {
                         easterEggImage?.setImageResource(R.drawable.easter_egg_photo)
                     } catch (e: Exception) {
-                        // If image not found, show placeholder
                         easterEggImage?.setImageResource(R.mipmap.ic_launcher)
                     }
                 } else {
-                    // 10, 15, 20... clicks - show 404 error
                     easterEggCard?.visibility = View.GONE
                     easterEggError?.visibility = View.VISIBLE
                 }
                 
-                // Hide after 2 seconds
                 Handler(Looper.getMainLooper()).postDelayed({
                     easterEggContainer?.visibility = View.GONE
                 }, 2000)

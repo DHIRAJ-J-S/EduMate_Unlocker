@@ -5,6 +5,7 @@ on:
   push:
     tags:
       - 'v*'  # Runs when you push a tag starting with 'v' (e.g., v1.0, v1.1, v2.0)
+  workflow_dispatch:  # Allows manual triggering from GitHub Actions tab
 
 jobs:
   build:
@@ -49,8 +50,16 @@ jobs:
         run: |
           mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/EduMate_Unlocker.apk
       
-      # Step 8: Create GitHub Release and upload APK
+      # Step 8: Upload APK as artifact (always available)
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EduMate_Unlocker
+          path: app/build/outputs/apk/release/EduMate_Unlocker.apk
+      
+      # Step 9: Create GitHub Release (only on tag push)
       - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
           files: app/build/outputs/apk/release/EduMate_Unlocker.apk
