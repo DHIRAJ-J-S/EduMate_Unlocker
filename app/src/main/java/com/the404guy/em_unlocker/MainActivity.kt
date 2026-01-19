@@ -17,15 +17,19 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
 import android.text.SpannableString
 import android.text.Spanned
 import android.text.style.StyleSpan
 import android.util.Base64
 import android.util.Log
 import android.view.KeyEvent
+import android.view.LayoutInflater
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.*
 import android.widget.*
 import androidx.activity.result.ActivityResultLauncher
@@ -36,43 +40,51 @@ import androidx.appcompat.widget.SwitchCompat
 import androidx.cardview.widget.CardView
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.google.android.material.bottomsheet.BottomSheetDialog
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.File
-import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.KeyStore
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.Executors
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "EduMateUnlocker"
         private const val PREFS_NAME = "EduMateUnlockerPrefs"
+        private const val CREDENTIAL_PREFS_NAME = "EduMateCredentials"
         private const val KEY_SPOOF_ENABLED = "spoof_enabled"
         private const val KEY_SELECTED_COLLEGE = "selected_college"
         private const val KEY_FIRST_LAUNCH = "first_launch"
         private const val KEY_USE_LEGACY_SITE = "use_legacy_site"
         private const val KEY_TIP_SHOWN = "tip_shown"
         private const val KEY_CHECK_UPDATES = "check_updates_on_startup"
+        private const val KEY_SIT_CREDENTIALS = "sit_credentials"
+        private const val KEY_SEC_CREDENTIALS = "sec_credentials"
+        private const val KEYSTORE_ALIAS = "EduMateCredentialKey"
         
         const val COLLEGE_SIT = "SIT"
         const val COLLEGE_SEC = "SEC"
         
-        private const val CURRENT_VERSION = "1.3"
+        private const val CURRENT_VERSION = "1.2"
+        private const val EMAIL_DOMAIN = "@sairamtap.edu.in"
         
-        // ============================================
-        // GITHUB REPOSITORY URL
-        // ============================================
         private const val GITHUB_REPO_URL = "https://github.com/DHIRAJ-J-S/EduMate_Unlocker"
         private const val GITHUB_API_RELEASES = "https://api.github.com/repos/DHIRAJ-J-S/EduMate_Unlocker/releases/latest"
         private const val GITHUB_RELEASES_PAGE = "https://github.com/DHIRAJ-J-S/EduMate_Unlocker/releases/latest"
-        // ============================================
         
         val NEW_SITE_URLS = mapOf(
             COLLEGE_SIT to "https://student.sairamit.edu.in/",
@@ -85,12 +97,15 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    data class Credential(val username: String, val password: String)
+
     private lateinit var webView: WebView
     private lateinit var progressBar: ProgressBar
     private lateinit var swipeRefresh: SwipeRefreshLayout
     private lateinit var statusText: TextView
     private lateinit var toolbar: androidx.appcompat.widget.Toolbar
     private lateinit var prefs: SharedPreferences
+    private lateinit var credentialPrefs: SharedPreferences
     
     private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
     private lateinit var fileChooserLauncher: ActivityResultLauncher<Intent>
@@ -98,12 +113,15 @@ class MainActivity : AppCompatActivity() {
     private var easterEggClicks = 0
     private var settingsDialog: AlertDialog? = null
     private var updateBottomSheet: BottomSheetDialog? = null
+    private var saveCredentialSheet: BottomSheetDialog? = null
     
     private var spoofEnabled = true
     private var selectedCollege = COLLEGE_SIT
     private var useLegacySite = false
     private var updateIgnoredThisSession = false
     private var currentDownloadId: Long = -1
+    private var pendingCredentialToSave: Credential? = null
+    private var credentialSavePromptShown = false
 
     private val desktopUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     private var defaultUserAgent = ""
@@ -254,11 +272,369 @@ class MainActivity : AppCompatActivity() {
         })();
     """.trimIndent()
 
+    // ==================== ENCRYPTION ====================
+    
+    private fun getOrCreateSecretKey(): SecretKey {
+        val keyStore = KeyStore.getInstance("AndroidKeyStore")
+        keyStore.load(null)
+        
+        if (keyStore.containsAlias(KEYSTORE_ALIAS)) {
+            val entry = keyStore.getEntry(KEYSTORE_ALIAS, null) as KeyStore.SecretKeyEntry
+            return entry.secretKey
+        }
+        
+        val keyGenerator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+        val keySpec = KeyGenParameterSpec.Builder(
+            KEYSTORE_ALIAS,
+            KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+        )
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setKeySize(256)
+            .build()
+        
+        keyGenerator.init(keySpec)
+        return keyGenerator.generateKey()
+    }
+    
+    private fun encrypt(data: String): String {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateSecretKey())
+        val iv = cipher.iv
+        val encrypted = cipher.doFinal(data.toByteArray(Charsets.UTF_8))
+        val combined = ByteArray(iv.size + encrypted.size)
+        System.arraycopy(iv, 0, combined, 0, iv.size)
+        System.arraycopy(encrypted, 0, combined, iv.size, encrypted.size)
+        return Base64.encodeToString(combined, Base64.DEFAULT)
+    }
+    
+    private fun decrypt(encryptedData: String): String {
+        try {
+            val combined = Base64.decode(encryptedData, Base64.DEFAULT)
+            val iv = combined.copyOfRange(0, 12)
+            val encrypted = combined.copyOfRange(12, combined.size)
+            
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            val spec = GCMParameterSpec(128, iv)
+            cipher.init(Cipher.DECRYPT_MODE, getOrCreateSecretKey(), spec)
+            return String(cipher.doFinal(encrypted), Charsets.UTF_8)
+        } catch (e: Exception) {
+            Log.e(TAG, "Decryption failed", e)
+            return ""
+        }
+    }
+
+    // ==================== CREDENTIAL MANAGEMENT ====================
+    
+    private fun getCredentials(college: String): List<Credential> {
+        val key = if (college == COLLEGE_SIT) KEY_SIT_CREDENTIALS else KEY_SEC_CREDENTIALS
+        val encrypted = credentialPrefs.getString(key, null) ?: return emptyList()
+        
+        try {
+            val json = decrypt(encrypted)
+            if (json.isEmpty()) return emptyList()
+            
+            val array = JSONArray(json)
+            val credentials = mutableListOf<Credential>()
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                credentials.add(Credential(obj.getString("username"), obj.getString("password")))
+            }
+            return credentials
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get credentials", e)
+            return emptyList()
+        }
+    }
+    
+    private fun saveCredentials(college: String, credentials: List<Credential>) {
+        val key = if (college == COLLEGE_SIT) KEY_SIT_CREDENTIALS else KEY_SEC_CREDENTIALS
+        
+        val array = JSONArray()
+        credentials.forEach { cred ->
+            val obj = JSONObject()
+            obj.put("username", cred.username)
+            obj.put("password", cred.password)
+            array.put(obj)
+        }
+        
+        val encrypted = encrypt(array.toString())
+        credentialPrefs.edit().putString(key, encrypted).apply()
+    }
+    
+    private fun addCredential(college: String, credential: Credential) {
+        val existing = getCredentials(college).toMutableList()
+        val index = existing.indexOfFirst { it.username == credential.username }
+        if (index >= 0) {
+            existing[index] = credential
+        } else {
+            existing.add(0, credential)
+        }
+        saveCredentials(college, existing)
+    }
+    
+    private fun deleteCredential(college: String, username: String) {
+        val existing = getCredentials(college).toMutableList()
+        existing.removeAll { it.username == username }
+        saveCredentials(college, existing)
+    }
+    
+    private fun getFirstCredential(college: String): Credential? {
+        return getCredentials(college).firstOrNull()
+    }
+
+    // ==================== AUTOFILL ====================
+    
+    private fun autoFillCredentials() {
+        val credential = getFirstCredential(selectedCollege) ?: return
+        
+        val username = if (useLegacySite) {
+            credential.username.replace(EMAIL_DOMAIN, "")
+        } else {
+            if (credential.username.contains("@")) credential.username 
+            else credential.username + EMAIL_DOMAIN
+        }
+        
+        val script = if (useLegacySite) {
+            """
+            (function() {
+                try {
+                    var userInput = document.getElementById('UserName') || document.querySelector('input[name="UserName"]');
+                    var passInput = document.getElementById('Password') || document.querySelector('input[name="Password"]');
+                    if (userInput) userInput.value = '$username';
+                    if (passInput) passInput.value = '${credential.password.replace("'", "\\'")}';
+                    return 'OK';
+                } catch(e) { return 'ERROR: ' + e.message; }
+            })();
+            """.trimIndent()
+        } else {
+            """
+            (function() {
+                try {
+                    var userInput = document.querySelector('input[name="studentId"]') || document.querySelector('input[type="text"]');
+                    var passInput = document.querySelector('input[name="password"]') || document.querySelector('input[type="password"]');
+                    if (userInput) {
+                        userInput.value = '$username';
+                        userInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                    if (passInput) {
+                        passInput.value = '${credential.password.replace("'", "\\'")}';
+                        passInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    }
+                    return 'OK';
+                } catch(e) { return 'ERROR: ' + e.message; }
+            })();
+            """.trimIndent()
+        }
+        
+        Handler(Looper.getMainLooper()).postDelayed({
+            webView.evaluateJavascript(script) { result ->
+                Log.d(TAG, "Autofill result: $result")
+            }
+        }, 1000)
+    }
+    
+    private fun detectAndCaptureCredentials() {
+        if (credentialSavePromptShown) return
+        
+        val script = if (useLegacySite) {
+            """
+            (function() {
+                try {
+                    var userInput = document.getElementById('UserName') || document.querySelector('input[name="UserName"]');
+                    var passInput = document.getElementById('Password') || document.querySelector('input[name="Password"]');
+                    if (userInput && passInput && userInput.value && passInput.value) {
+                        return JSON.stringify({username: userInput.value, password: passInput.value});
+                    }
+                    return '';
+                } catch(e) { return ''; }
+            })();
+            """.trimIndent()
+        } else {
+            """
+            (function() {
+                try {
+                    var userInput = document.querySelector('input[name="studentId"]') || document.querySelector('input[type="text"]');
+                    var passInput = document.querySelector('input[name="password"]') || document.querySelector('input[type="password"]');
+                    if (userInput && passInput && userInput.value && passInput.value) {
+                        return JSON.stringify({username: userInput.value, password: passInput.value});
+                    }
+                    return '';
+                } catch(e) { return ''; }
+            })();
+            """.trimIndent()
+        }
+        
+        webView.evaluateJavascript(script) { result ->
+            val cleanResult = result.trim().removeSurrounding("\"").replace("\\\"", "\"")
+            if (cleanResult.isNotEmpty() && cleanResult != "null") {
+                try {
+                    val json = JSONObject(cleanResult)
+                    var username = json.getString("username")
+                    val password = json.getString("password")
+                    
+                    if (useLegacySite && !username.contains("@")) {
+                        username = username + EMAIL_DOMAIN
+                    }
+                    
+                    val existingCredentials = getCredentials(selectedCollege)
+                    val existingCred = existingCredentials.find { it.username == username }
+                    
+                    if (existingCred == null || existingCred.password != password) {
+                        pendingCredentialToSave = Credential(username, password)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to parse credentials", e)
+                }
+            }
+        }
+    }
+    
+    private fun showSaveCredentialDialog() {
+        val credential = pendingCredentialToSave ?: return
+        if (isFinishing || isDestroyed) return
+        
+        credentialSavePromptShown = true
+        
+        saveCredentialSheet = BottomSheetDialog(this)
+        val dialogView = layoutInflater.inflate(R.layout.dialog_save_credential, null)
+        saveCredentialSheet?.setContentView(dialogView)
+        
+        val textUsername = dialogView.findViewById<TextView>(R.id.textUsername)
+        val textInfo = dialogView.findViewById<TextView>(R.id.textCredentialInfo)
+        val btnSave = dialogView.findViewById<Button>(R.id.btnSaveCredential)
+        val btnNotNow = dialogView.findViewById<Button>(R.id.btnNotNow)
+        
+        textUsername?.text = credential.username.replace(EMAIL_DOMAIN, "")
+        textInfo?.text = "Save credentials for $selectedCollege"
+        
+        val primaryColor = if (selectedCollege == COLLEGE_SIT) {
+            ContextCompat.getColor(this, R.color.sit_primary)
+        } else {
+            ContextCompat.getColor(this, R.color.sec_primary)
+        }
+        btnSave?.backgroundTintList = ColorStateList.valueOf(primaryColor)
+        
+        btnSave?.setOnClickListener {
+            addCredential(selectedCollege, credential)
+            showToast("Credentials saved")
+            pendingCredentialToSave = null
+            saveCredentialSheet?.dismiss()
+        }
+        
+        btnNotNow?.setOnClickListener {
+            pendingCredentialToSave = null
+            saveCredentialSheet?.dismiss()
+        }
+        
+        saveCredentialSheet?.setOnDismissListener {
+            pendingCredentialToSave = null
+        }
+        
+        saveCredentialSheet?.show()
+    }
+    
+    private fun showPasswordManagerDialog() {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_password_manager, null)
+        
+        val dialog = AlertDialog.Builder(this, R.style.RoundedDialog)
+            .setView(dialogView)
+            .create()
+        
+        val recyclerSIT = dialogView.findViewById<RecyclerView>(R.id.recyclerSIT)
+        val recyclerSEC = dialogView.findViewById<RecyclerView>(R.id.recyclerSEC)
+        val textNoSIT = dialogView.findViewById<TextView>(R.id.textNoSITCredentials)
+        val textNoSEC = dialogView.findViewById<TextView>(R.id.textNoSECCredentials)
+        val btnClose = dialogView.findViewById<Button>(R.id.btnClosePasswordManager)
+        
+        recyclerSIT?.layoutManager = LinearLayoutManager(this)
+        recyclerSEC?.layoutManager = LinearLayoutManager(this)
+        
+        fun refreshLists() {
+            val sitCreds = getCredentials(COLLEGE_SIT)
+            val secCreds = getCredentials(COLLEGE_SEC)
+            
+            if (sitCreds.isEmpty()) {
+                recyclerSIT?.visibility = View.GONE
+                textNoSIT?.visibility = View.VISIBLE
+            } else {
+                recyclerSIT?.visibility = View.VISIBLE
+                textNoSIT?.visibility = View.GONE
+                recyclerSIT?.adapter = CredentialAdapter(sitCreds, COLLEGE_SIT) { username ->
+                    deleteCredential(COLLEGE_SIT, username)
+                    refreshLists()
+                    showToast("Credential deleted")
+                }
+            }
+            
+            if (secCreds.isEmpty()) {
+                recyclerSEC?.visibility = View.GONE
+                textNoSEC?.visibility = View.VISIBLE
+            } else {
+                recyclerSEC?.visibility = View.VISIBLE
+                textNoSEC?.visibility = View.GONE
+                recyclerSEC?.adapter = CredentialAdapter(secCreds, COLLEGE_SEC) { username ->
+                    deleteCredential(COLLEGE_SEC, username)
+                    refreshLists()
+                    showToast("Credential deleted")
+                }
+            }
+        }
+        
+        refreshLists()
+        
+        btnClose?.setOnClickListener {
+            dialog.dismiss()
+        }
+        
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.show()
+    }
+    
+    inner class CredentialAdapter(
+        private val credentials: List<Credential>,
+        private val college: String,
+        private val onDelete: (String) -> Unit
+    ) : RecyclerView.Adapter<CredentialAdapter.ViewHolder>() {
+        
+        inner class ViewHolder(view: View) : RecyclerView.ViewHolder(view) {
+            val textUsername: TextView = view.findViewById(R.id.textCredentialUsername)
+            val btnDelete: ImageButton = view.findViewById(R.id.btnDeleteCredential)
+        }
+        
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+            val view = LayoutInflater.from(parent.context)
+                .inflate(R.layout.item_credential, parent, false)
+            return ViewHolder(view)
+        }
+        
+        override fun onBindViewHolder(holder: ViewHolder, position: Int) {
+            val cred = credentials[position]
+            holder.textUsername.text = cred.username.replace(EMAIL_DOMAIN, "")
+            holder.btnDelete.setOnClickListener {
+                AlertDialog.Builder(this@MainActivity)
+                    .setTitle("Delete Credential")
+                    .setMessage("Delete saved credential for ${cred.username.replace(EMAIL_DOMAIN, "")}?")
+                    .setPositiveButton("Delete") { _, _ -> onDelete(cred.username) }
+                    .setNegativeButton("Cancel", null)
+                    .show()
+            }
+            holder.itemView.setOnClickListener {
+                showToast("Username: ${cred.username.replace(EMAIL_DOMAIN, "")}")
+            }
+        }
+        
+        override fun getItemCount() = credentials.size
+    }
+
+    // ==================== MAIN ACTIVITY ====================
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
         prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        credentialPrefs = getSharedPreferences(CREDENTIAL_PREFS_NAME, Context.MODE_PRIVATE)
         spoofEnabled = prefs.getBoolean(KEY_SPOOF_ENABLED, true)
         selectedCollege = prefs.getString(KEY_SELECTED_COLLEGE, COLLEGE_SIT) ?: COLLEGE_SIT
         
@@ -305,7 +681,6 @@ class MainActivity : AppCompatActivity() {
             applyCollegeTheme(selectedCollege)
             loadSelectedCollege()
             
-            // Check for updates only if not first launch and enabled
             if (prefs.getBoolean(KEY_CHECK_UPDATES, true)) {
                 checkForUpdates()
             }
@@ -407,7 +782,6 @@ class MainActivity : AppCompatActivity() {
         textLatestVersion?.text = latestVersion
         textChangelog?.text = changelog.ifEmpty { "• Bug fixes and improvements" }
         
-        // Apply theme color to install button
         val primaryColor = if (selectedCollege == COLLEGE_SIT) {
             ContextCompat.getColor(this, R.color.sit_primary)
         } else {
@@ -415,7 +789,6 @@ class MainActivity : AppCompatActivity() {
         }
         btnInstall?.backgroundTintList = ColorStateList.valueOf(primaryColor)
         
-        // Collapsible changelog
         var changelogExpanded = false
         changelogHeader?.setOnClickListener {
             changelogExpanded = !changelogExpanded
@@ -461,7 +834,6 @@ class MainActivity : AppCompatActivity() {
             
             showToast("Downloading update...")
             
-            // Register receiver for download completion
             val receiver = object : BroadcastReceiver() {
                 override fun onReceive(context: Context?, intent: Intent?) {
                     val id = intent?.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1)
@@ -507,7 +879,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ==================== END UPDATE CHECKER ====================
+    // ==================== UI DIALOGS ====================
 
     private fun showCollegeSelectionDialog(isFirstLaunch: Boolean = false) {
         val dialogView = layoutInflater.inflate(R.layout.dialog_college_selection, null)
@@ -600,11 +972,10 @@ class MainActivity : AppCompatActivity() {
 
         val btnSIT = dialogView.findViewById<CardView>(R.id.btnSIT)
         val btnSEC = dialogView.findViewById<CardView>(R.id.btnSEC)
-        val textSIT = dialogView.findViewById<TextView>(R.id.textSIT)
-        val textSEC = dialogView.findViewById<TextView>(R.id.textSEC)
         val switchLegacy = dialogView.findViewById<SwitchCompat>(R.id.switchLegacy)
         val switchUpdateCheck = dialogView.findViewById<SwitchCompat>(R.id.switchUpdateCheck)
         val btnClearCache = dialogView.findViewById<LinearLayout>(R.id.btnClearCache)
+        val btnPasswordManager = dialogView.findViewById<LinearLayout>(R.id.btnPasswordManager)
         val btnAbout = dialogView.findViewById<LinearLayout>(R.id.btnAbout)
         val btnGitHub = dialogView.findViewById<LinearLayout>(R.id.btnGitHub)
         
@@ -622,6 +993,7 @@ class MainActivity : AppCompatActivity() {
                 selectedCollege = COLLEGE_SIT
                 saveCollegePreference()
                 applyCollegeTheme(COLLEGE_SIT)
+                credentialSavePromptShown = false
                 settingsDialog?.dismiss()
                 loadSelectedCollege()
             }
@@ -632,6 +1004,7 @@ class MainActivity : AppCompatActivity() {
                 selectedCollege = COLLEGE_SEC
                 saveCollegePreference()
                 applyCollegeTheme(COLLEGE_SEC)
+                credentialSavePromptShown = false
                 settingsDialog?.dismiss()
                 loadSelectedCollege()
             }
@@ -642,6 +1015,7 @@ class MainActivity : AppCompatActivity() {
             prefs.edit().putBoolean(KEY_USE_LEGACY_SITE, useLegacySite).apply()
             showToast("Old EduMate: ${if (useLegacySite) "ON" else "OFF"}")
             applyCollegeTheme(selectedCollege)
+            credentialSavePromptShown = false
             settingsDialog?.dismiss()
             loadSelectedCollege()
         }
@@ -657,6 +1031,11 @@ class MainActivity : AppCompatActivity() {
             showToast("Cache cleared")
             settingsDialog?.dismiss()
             webView.reload()
+        }
+        
+        btnPasswordManager?.setOnClickListener {
+            settingsDialog?.dismiss()
+            showPasswordManagerDialog()
         }
         
         btnAbout.setOnClickListener {
@@ -722,6 +1101,7 @@ class MainActivity : AppCompatActivity() {
             webView.settings.userAgentString = defaultUserAgent
         }
         
+        credentialSavePromptShown = false
         webView.loadUrl(url!!)
     }
 
@@ -786,11 +1166,24 @@ class MainActivity : AppCompatActivity() {
                     view?.evaluateJavascript(legacyNavbarFixScript, null)
                 }
                 
+                // Auto-fill saved credentials on login page
+                if (isLoginPage(url)) {
+                    autoFillCredentials()
+                }
+                
                 updateStatus("EduMate Unlocker - $selectedCollege | Ready")
             }
-
+            
             override fun shouldOverrideUrlLoading(view: WebView?, request: WebResourceRequest?): Boolean {
                 val url = request?.url?.toString() ?: return false
+                
+                // Detect successful login (URL changed from login page)
+                if (!isLoginPage(url) && pendingCredentialToSave != null) {
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        showSaveCredentialDialog()
+                    }, 500)
+                }
+                
                 if (url.contains("sairam")) {
                     return false
                 }
@@ -869,9 +1262,17 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
-
+    
+    private fun isLoginPage(url: String?): Boolean {
+        if (url == null) return false
+        return url.contains("student.sairam") || 
+               (url.contains("edumate.sairam") && (url.endsWith("/") || url.contains("login") || !url.contains("/")))
+    }
+    
     private fun setupSwipeRefresh() {
         swipeRefresh.setOnRefreshListener {
+            // Capture credentials before refresh (in case user entered them)
+            detectAndCaptureCredentials()
             webView.reload()
         }
     }
@@ -1053,6 +1454,8 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         webView.onPause()
+        // Capture credentials when app goes to background
+        detectAndCaptureCredentials()
     }
 
     override fun onDestroy() {
