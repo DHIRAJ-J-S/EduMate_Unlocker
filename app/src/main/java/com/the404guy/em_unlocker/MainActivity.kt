@@ -64,7 +64,7 @@ class MainActivity : AppCompatActivity() {
         const val COLLEGE_SIT = "SIT"
         const val COLLEGE_SEC = "SEC"
         
-        private const val CURRENT_VERSION = "1.3"
+        private const val CURRENT_VERSION = "1.2"
         
         // ============================================
         // GITHUB REPOSITORY URL
