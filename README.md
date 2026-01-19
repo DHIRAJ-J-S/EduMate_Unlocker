@@ -3,7 +3,7 @@
 ![Android](https://img.shields.io/badge/Platform-Android-3DDC84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-1.9-7F52FF?logo=kotlin&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
-![Version](https://img.shields.io/badge/Version-1.2-orange)
+![Version](https://img.shields.io/badge/Version-1.1-orange)
 
 [![Download APK](https://img.shields.io/badge/Download-Latest%20APK-brightgreen?style=for-the-badge&logo=android)](https://github.com/DHIRAJ-J-S/EduMate_Unlocker/releases/latest/download/EduMate_Unlocker.apk)
 
@@ -52,24 +52,9 @@ This app is built with Kotlin and uses Android WebView to load the EduMate porta
 
 - 🏫 **Dual College Support** — Switch between SIT and SEC portals
 - 📜 **Legacy Mode** — Access the old EduMate portal with working student login
-- 🔐 **Credential Manager** — Save and auto-fill login credentials securely (encrypted storage)
 - 📥 **File Downloads** — Download PDFs, images, and documents with Open/Share options
 - 📤 **File Uploads** — Native file picker for uploading assignments
 - 🧹 **Clear Cache** — One-tap cache clearing for login issues
-- 🔄 **Auto Update Check** — Silent update check on app launch with non-intrusive notifications
-
----
-
-## 🔐 Credential Manager
-
-The app includes a secure credential manager to save and auto-fill your login credentials:
-
-- **Auto-fill on launch** — Saved credentials are automatically filled when you open the app
-- **Save prompt** — After successful login, a small popup asks if you want to save your credentials
-- **Multiple accounts** — Save different credentials for SIT and SEC (credentials are college-specific)
-- **Encrypted storage** — All passwords are encrypted using Android Keystore (AES-256-GCM)
-- **Password Manager** — Access Settings → Password Manager to view and delete saved credentials
-- **Smart username handling** — Automatically handles the domain difference between new site (full email: `sit24ecxxx@sairamtap.edu.in`) and legacy site (just username: `sit24ecxxx`)
 
 ---
 
@@ -82,6 +67,7 @@ The app includes a secure credential manager to save and auto-fill your login cr
 ---
 
 ## 📱 Screenshots
+(Soon)
 
 <!-- Add your screenshots here -->
 <!-- ![Home](screenshots/home.png) -->
@@ -110,7 +96,7 @@ The app includes a secure credential manager to save and auto-fill your login cr
 ### Tips
 
 - 📱 **Landscape mode** works best for the full desktop experience
-- ⚙️ Tap the **gear icon** to switch colleges, enable legacy mode, manage passwords, or clear cache
+- ⚙️ Tap the **gear icon** to switch colleges, enable legacy mode, or clear cache
 
 ---
 
@@ -128,7 +114,7 @@ git clone https://github.com/DHIRAJ-J-S/EduMate_Unlocker.git
 
 ## ⚠️ Disclaimer
 
-This app is an unofficial wrapper and is not affiliated with Sairam Institutions. It simply provides a better way to access the existing student portal on Android devices. Your login credentials are stored locally on your device using Android's secure Keystore encryption — this app does not collect, transmit, or store any personal data externally.
+This app is an unofficial wrapper and is not affiliated with Sairam Institutions. It simply provides a better way to access the existing student portal on Android devices. Your login credentials are sent directly to the official EduMate servers — this app does not collect or store any personal data.
 
 ---
 
