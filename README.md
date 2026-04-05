@@ -1,5 +1,6 @@
 # EduMate Unlocker
 
+![Status](https://img.shields.io/badge/Status-Archived-red?style=flat-square&logo=github)
 ![Android](https://img.shields.io/badge/Platform-Android-3DDC84?logo=android&logoColor=white)
 ![Kotlin](https://img.shields.io/badge/Kotlin-1.9-7F52FF?logo=kotlin&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green)
