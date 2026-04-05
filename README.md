@@ -7,6 +7,13 @@
 
 [![Download APK](https://img.shields.io/badge/Download-Latest%20APK-brightgreen?style=for-the-badge&logo=android)](https://github.com/DHIRAJ-J-S/EduMate_Unlocker/releases/latest/download/EduMate_Unlocker.apk)
 
+
+> ⚠️ **Archived Project**
+>
+> EduMate now works on mobile — so this workaround app is no longer needed.
+>
+> Archiving this repo. It won’t be maintained further, but keeping it here for reference.
+
 A native Android wrapper that makes the Sairam EduMate student portal usable on mobile devices.
 
 ---
